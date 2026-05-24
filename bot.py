@@ -21,19 +21,23 @@ def get_db():
 
 def get_user(telegram_id: int):
     db = get_db()
-    user = db.query(User).filter_by(telegram_id=telegram_id).first()
-    db.close()
-    return user
+    try:
+        user = db.query(User).filter_by(telegram_id=telegram_id).first()
+        return user
+    finally:
+        db.close()
 
 def get_settings():
     db = get_db()
-    settings = db.query(SystemSettings).first()
-    if not settings:
-        settings = SystemSettings()
-        db.add(settings)
-        db.commit()
-    db.close()
-    return settings
+    try:
+        settings = db.query(SystemSettings).first()
+        if not settings:
+            settings = SystemSettings()
+            db.add(settings)
+            db.commit()
+        return settings
+    finally:
+        db.close()
 
 def is_admin(telegram_id: int) -> bool:
     return telegram_id in ADMIN_IDS
@@ -54,15 +58,17 @@ class Training(StatesGroup):
 @dp.message()
 async def auto_register(message: types.Message):
     db = get_db()
-    existing = db.query(User).filter_by(telegram_id=message.from_user.id).first()
-    if not existing:
-        new_user = User(
-            telegram_id=message.from_user.id,
-            username=message.from_user.username
-        )
-        db.add(new_user)
-        db.commit()
-    db.close()
+    try:
+        existing = db.query(User).filter_by(telegram_id=message.from_user.id).first()
+        if not existing:
+            new_user = User(
+                telegram_id=message.from_user.id,
+                username=message.from_user.username
+            )
+            db.add(new_user)
+            db.commit()
+    finally:
+        db.close()
 
 # ---------- Premium check middleware ----------
 from aiogram import BaseMiddleware
@@ -188,19 +194,23 @@ async def train_start(message: types.Message, state: FSMContext):
 @dp.message(Training.collecting, F.text & ~F.text.startswith('/'))
 async def collect_style(message: types.Message, state: FSMContext):
     db = get_db()
-    sample = StyleSample(user_id=message.from_user.id, text=message.text, category="tweet")
-    db.add(sample)
-    db.commit()
-    db.close()
-    await message.answer("✅ Sample stored. Send more or /done_training")
+    try:
+        sample = StyleSample(user_id=message.from_user.id, text=message.text, category="tweet")
+        db.add(sample)
+        db.commit()
+        await message.answer("✅ Sample stored. Send more or /done_training")
+    finally:
+        db.close()
 
 @dp.message(Training.collecting, Command("done_training"))
 async def finish_training(message: types.Message, state: FSMContext):
     await state.clear()
     db = get_db()
-    count = db.query(StyleSample).filter_by(user_id=message.from_user.id).count()
-    db.close()
-    await message.answer(f"✅ Training finished. I learned from {count} samples. Your style will now be used in /generate.")
+    try:
+        count = db.query(StyleSample).filter_by(user_id=message.from_user.id).count()
+        await message.answer(f"✅ Training finished. I learned from {count} samples. Your style will now be used in /generate.")
+    finally:
+        db.close()
 
 # ---------- ADMIN COMMANDS ----------
 @dp.message(Command("setprice"))
@@ -215,11 +225,13 @@ async def cmd_setprice(message: types.Message, command: CommandObject):
         await message.answer("❌ Invalid number.")
         return
     db = get_db()
-    settings = db.query(SystemSettings).first()
-    settings.premium_price = new_price
-    db.commit()
-    db.close()
-    await message.answer(f"✅ Premium price updated to <b>{new_price} USDT</b>")
+    try:
+        settings = db.query(SystemSettings).first()
+        settings.premium_price = new_price
+        db.commit()
+        await message.answer(f"✅ Premium price updated to <b>{new_price} USDT</b>")
+    finally:
+        db.close()
 
 @dp.message(Command("setaddress"))
 @require_admin
@@ -229,11 +241,13 @@ async def cmd_setaddress(message: types.Message, command: CommandObject):
         return
     new_addr = command.args.strip()
     db = get_db()
-    settings = db.query(SystemSettings).first()
-    settings.payment_address = new_addr
-    db.commit()
-    db.close()
-    await message.answer(f"✅ Payment address updated to:\n<code>{new_addr}</code>")
+    try:
+        settings = db.query(SystemSettings).first()
+        settings.payment_address = new_addr
+        db.commit()
+        await message.answer(f"✅ Payment address updated to:\n<code>{new_addr}</code>")
+    finally:
+        db.close()
 
 @dp.message(Command("verify"))
 @require_admin
@@ -247,21 +261,21 @@ async def cmd_verify(message: types.Message, command: CommandObject):
         await message.answer("❌ Invalid user ID.")
         return
     db = get_db()
-    user = db.query(User).filter_by(telegram_id=uid).first()
-    if not user:
+    try:
+        user = db.query(User).filter_by(telegram_id=uid).first()
+        if not user:
+            await message.answer("User not found. They must /start first.")
+            return
+        if user.is_premium:
+            await message.answer("User already premium.")
+            return
+        user.is_premium = True
+        db.commit()
+        await message.answer(f"✅ User <b>{uid}</b> upgraded to premium.")
+        with suppress(Exception):
+            await bot.send_message(uid, "🎉 Your premium has been activated! Enjoy all features.")
+    finally:
         db.close()
-        await message.answer("User not found. They must /start first.")
-        return
-    if user.is_premium:
-        db.close()
-        await message.answer("User already premium.")
-        return
-    user.is_premium = True
-    db.commit()
-    db.close()
-    await message.answer(f"✅ User <b>{uid}</b> upgraded to premium.")
-    with suppress(Exception):
-        await bot.send_message(uid, "🎉 Your premium has been activated! Enjoy all features.")
 
 # ---------- Error handler ----------
 @dp.errors()
@@ -272,10 +286,12 @@ async def error_handler(update: types.Update, exception: Exception):
 async def main():
     # Ensure settings row exists
     db = get_db()
-    if not db.query(SystemSettings).first():
-        db.add(SystemSettings())
-        db.commit()
-    db.close()
+    try:
+        if not db.query(SystemSettings).first():
+            db.add(SystemSettings())
+            db.commit()
+    finally:
+        db.close()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
