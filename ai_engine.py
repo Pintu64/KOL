@@ -8,7 +8,7 @@ deepseek_client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
 grok_client = OpenAI(api_key=GROK_API_KEY, base_url=GROK_BASE_URL) if GROK_API_KEY else None
 
 # --- The full Crypto KOL Writer system prompt (from your description) ---
-SYSTEM_PROMPT = """You are an advanced AI Crypto KOL Writer and Social Media Assistant specialized in Twitter/X content creation, Telegram community writing, crypto branding, meme culture, viral engagement, and professional Web3 communication.
+SYSTEM_PROMPT = """You are an advanced AI Crypto KOL Writer and Social Media Assistant specialized in Twitter/X content creation, Telegram community writing, crypto branding, meme culture, viral engagement.
 
 Your primary mission is to generate high-quality, engaging, natural, human-like crypto content optimized for engagement, clarity, authority, and virality.
 
@@ -66,7 +66,7 @@ Never directly copy content.
 
 CRYPTO KNOWLEDGE
 You are highly knowledgeable about:
-Bitcoin, Ethereum, Solana, Memecoins, Trading psychology, Exchanges, DeFi, NFTs, Web3, Airdrops, Market cycles, Trading slang, Crypto narratives, On-chain culture, Binance ecosystem, Bitget ecosystem, Crypto community culture.
+Bitcoin, Ethereum, Solana, Memecoins, Trading psychology, Exchanges, DeFi, NFTs, Web3, Airdrops, Market cycles, Trading slang, Crypto narratives, On-chain culture, Binance ecosystem, and more.
 
 HUMOR ENGINE
 Your humor should feel:
@@ -114,11 +114,13 @@ Every output should feel: Human, Smart, Viral, Crypto-native, Engaging, Professi
 def get_user_style_samples(user_id: int, n=3) -> str:
     """Retrieve recent style samples for a user."""
     db = Session()
-    samples = db.query(StyleSample).filter_by(user_id=user_id).order_by(StyleSample.timestamp.desc()).limit(n).all()
-    db.close()
-    if not samples:
-        return ""
-    return "\n".join([f"Example: {s.text}" for s in samples])
+    try:
+        samples = db.query(StyleSample).filter_by(user_id=user_id).order_by(StyleSample.timestamp.desc()).limit(n).all()
+        if not samples:
+            return ""
+        return "\n".join([f"Example: {s.text}" for s in samples])
+    finally:
+        db.close()
 
 
 def decide_model(mode: str) -> str:
@@ -137,17 +139,18 @@ def generate_crypto_content(
     """
     Main AI generation function.
     """
-    # Build system prompt with user's style if available
-    system_msg = SYSTEM_PROMPT
-    if user_id:
-        style_text = get_user_style_samples(user_id)
-        if style_text:
-            system_msg += f"\n\nUSER'S WRITING STYLE:\n{style_text}\nNow generate new content in the exact same style."
-
-    full_prompt = f"Mode: {mode}\nLanguage: {language}\nGenerate a {mode} tweet about: {prompt}"
-
-    model_choice = decide_model(mode)
     try:
+        # Build system prompt with user's style if available
+        system_msg = SYSTEM_PROMPT
+        if user_id:
+            style_text = get_user_style_samples(user_id)
+            if style_text:
+                system_msg += f"\n\nUSER'S WRITING STYLE:\n{style_text}\nNow generate new content in the exact same style."
+
+        full_prompt = f"Mode: {mode}\nLanguage: {language}\nGenerate a {mode} tweet about: {prompt}"
+
+        model_choice = decide_model(mode)
+        
         if model_choice == "grok":
             client = grok_client
             model_name = "grok-2"  # Adjust if Grok offers different model names
